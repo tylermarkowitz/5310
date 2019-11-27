@@ -1,0 +1,386 @@
+#Team 1 - Project TeamWine
+
+#Connecting to database
+# Load needed packages
+require('RPostgreSQL')
+require('splitstackshape')
+
+#Load the PostgreSQL driver:
+drv <- dbDriver('PostgreSQL')
+
+#Create a connection 
+con <- dbConnect(drv, dbname = 'TEAMWINE',
+                 host = 'localhost', port = 5432,
+                 user = 'postgres', password = 'pwd4APAN5310')
+
+
+# Pass the SQL statements that create all tables
+stmt = "
+
+--Pre-Proc: clear out any test table--
+DROP TABLE IF EXISTS ca_county_taxable_food_services_and_drinking_places CASCADE;
+DROP TABLE IF EXISTS ca_county_taxable_total_retail_and_food CASCADE;
+DROP TABLE IF EXISTS CA_County_Taxable_Food_and_Beverage_Stores CASCADE;
+DROP TABLE IF EXISTS CA_County_Total_Taxable CASCADE;
+DROP TABLE IF EXISTS wages_liquor_stores CASCADE;
+DROP TABLE IF EXISTS wages_wine_wholesalers CASCADE;
+DROP TABLE IF EXISTS wages_wineries CASCADE;
+DROP TABLE IF EXISTS industry_info CASCADE;
+DROP TABLE IF EXISTS dessert_wine_retail_values CASCADE;
+DROP TABLE IF EXISTS sparkling_champagne_retail_values CASCADE;
+DROP TABLE IF EXISTS table_wine_retail_values CASCADE;
+DROP TABLE IF EXISTS fips_to_name CASCADE;
+DROP TABLE IF EXISTS transactions CASCADE;
+DROP TABLE IF EXISTS inventory CASCADE;
+DROP TABLE IF EXISTS reviews CASCADE;
+DROP TABLE IF EXISTS wines CASCADE;
+DROP TABLE IF EXISTS customers CASCADE;
+DROP TABLE IF EXISTS mkt_segs CASCADE;
+DROP TABLE IF EXISTS taxable_income CASCADE;
+DROP TABLE IF EXISTS taxable_income_zip CASCADE;
+DROP TABLE IF EXISTS taxable_income_county CASCADE;
+DROP TABLE IF EXISTS taxable_income_county_1 CASCADE;
+DROP TABLE IF EXISTS fips_to_zip CASCADE;
+DROP TABLE IF EXISTS fips_to_name CASCADE;
+DROP TABLE IF EXISTS locations CASCADE;
+
+--CREATE TABLES FOR SCHEMA
+--1- Geo tables and convert income to county level
+ 
+--/* FIPS to ZIP Lookup */ -- debugged -- 
+
+CREATE TABLE fips_to_zip (
+	fip_code INTEGER  NOT NULL,
+	zip_code INTEGER  NOT NULL,
+	county_name VARCHAR NOT NULL,
+	state VARCHAR (2) NOT NULL, 
+PRIMARY KEY (zip_code)
+);
+
+--/* FIPS to Country Name Lookup */  -- debugged --
+
+CREATE TABLE fips_to_name (
+	fip_code INTEGER  NOT NULL,
+	county_name VARCHAR NOT NULL,
+	state VARCHAR (2) NOT NULL, 
+PRIMARY KEY (fip_code)
+);
+
+--/* Taxable income by zip code */ -- debugged --
+
+CREATE TABLE taxable_income_zip (
+	zip_code INTEGER NOT NULL,
+	number_returns INTEGER,
+	size_of_adjusted_gross_income INTEGER NOT NULL,
+	amount INTEGER NOT NULL,
+PRIMARY KEY(zip_code),
+FOREIGN KEY(zip_code) REFERENCES fips_to_zip(zip_code)
+);
+
+--/* Make Taxable income by county - two step for clarity */ -- debugged --
+
+CREATE TABLE taxable_income_county_1 
+	AS (SELECT f.fip_code, t.zip_code, SUM(t.size_of_adjusted_gross_income) AS inc_sum, SUM(t.number_returns) AS num_returns, SUM(t.amount)
+		FROM taxable_income_zip t JOIN fips_to_zip f ON f.zip_code = t.zip_code
+		GROUP BY t.zip_code, f.zip_code
+);
+-- select * from taxable_income_county; 
+
+CREATE TABLE taxable_income_county  -- debugged --
+	AS (SELECT f.fip_code, SUM(f.inc_sum) AS adjusted_gross_income, SUM(f.num_returns) AS num_returns, SUM(f.sum) AS amount
+		FROM taxable_income_county_1 f
+		GROUP BY f.fip_code	
+);
+
+ALTER TABLE taxable_income_county ADD PRIMARY KEY (fip_code);
+
+ALTER TABLE taxable_income_county ADD FOREIGN KEY (fip_code) REFERENCES fips_to_name (fip_code);
+/* Lookup table connecting the industry code to the industry name */  -- debugged --
+CREATE TABLE industry_info (
+		industry_code INTEGER NOT NULL,
+		industry_name TEXT NOT NULL, 	
+PRIMARY KEY(industry_code)
+);
+
+--/* Wages for wineries */  -- debugged --
+
+CREATE TABLE wages_wineries (
+		fip_code INTEGER NOT NULL, 
+		Industry_code INTEGER NOT NULL, 
+		qtrly_estabs INTEGER NOT NULL, 
+		total_qtrly_wages INTEGER NOT NULL,
+PRIMARY KEY(fip_code),
+FOREIGN KEY(industry_code) REFERENCES industry_info(industry_code),
+FOREIGN KEY(fip_code) REFERENCES fips_to_name(fip_code)
+);
+
+
+--/* Wages for wine wholesalers*/  -- debugged --
+
+CREATE TABLE wages_wine_wholesalers (
+		fip_code INTEGER NOT NULL, 
+		Industry_code INTEGER NOT NULL, 
+		Qtrly_estabs INTEGER NOT NULL, 
+		total_qtrly_wages INTEGER NOT NULL,
+PRIMARY KEY(fip_code),
+FOREIGN KEY(industry_code) REFERENCES industry_info(industry_code),
+FOREIGN KEY(fip_code) REFERENCES fips_to_name(fip_code)
+);
+
+--/* Wages liquor stores*/  -- debugged --
+
+CREATE TABLE wages_liquor_stores (
+		fip_code INTEGER NOT NULL, 
+		Industry_code INTEGER NOT NULL, 
+		Qtrly_estabs INTEGER NOT NULL, 
+		total_qtrly_wages INTEGER NOT NULL,
+PRIMARY KEY(fip_code),
+FOREIGN KEY(industry_code) REFERENCES industry_info(industry_code),
+FOREIGN KEY(fip_code) REFERENCES fips_to_name(fip_code)
+);
+
+--/* Wine Market Segmentation Look-up */  -- debugged --
+
+CREATE TABLE mkt_segs ( 
+          	segment	   	varchar(20) NOT NULL,
+			min_price	integer NOT NULL,
+        	max_price	integer NOT NULL,
+            description	varchar(100),
+  PRIMARY KEY (segment)
+  );
+
+--/*CA County Total Taxable*/  -- debugged --
+
+CREATE TABLE CA_County_Total_Taxable (
+		fip_code INTEGER NOT NULL,
+		business_type VARCHAR NOT NULL,
+		number_outlets INTEGER,
+		taxable_transaction_$K INTEGER,
+		Date VARCHAR,
+PRIMARY KEY(fip_code),
+FOREIGN KEY(fip_code) REFERENCES fips_to_name(fip_code)
+);
+
+--/*CA County Taxable Food and Beverage Stores*/  -- debugged --
+
+CREATE TABLE CA_County_Taxable_Food_and_Beverage_Stores (
+		fip_code INTEGER NOT NULL,
+		business_type VARCHAR NOT NULL,
+		number_outlets INTEGER,
+		taxable_transaction_$K INTEGER,
+		date DATE,
+PRIMARY KEY(fip_code),
+FOREIGN KEY(fip_code) REFERENCES fips_to_name(fip_code)
+);
+
+--/*CA County Taxable Food Services and Drinking Places*/  -- debugged --
+
+CREATE TABLE ca_county_taxable_food_services_and_drinking_places (
+	fip_code INTEGER NOT NULL,
+	business_type VARCHAR (25) NOT NULL,
+	number_outlets INTEGER,
+	taxable_transaction_$k INTEGER,
+	date DATE,
+PRIMARY KEY(fip_code),
+FOREIGN KEY(fip_code) REFERENCES fips_to_name(fip_code)
+);
+
+
+--/*CA County Taxable Total Retail and Food*/  -- debugged --
+
+CREATE TABLE CA_County_Taxable_Total_Retail_and_Food (
+		fip_code INTEGER  NOT NULL,
+		business_type VARCHAR NOT NULL,
+		number_outlets INTEGER,
+		taxable_transaction_$K INTEGER,
+		date DATE,
+PRIMARY KEY(fip_code),
+FOREIGN KEY(fip_code) REFERENCES fips_to_name(fip_code)
+);
+
+--/*CA County Retail Values for Table Wine*/  -- debugged --
+
+CREATE TABLE table_wine_retail_values ( 
+		county	   varchar(15) NOT NULL,
+		fip_code INTEGER NOT NULL,
+		number_outlets	integer NOT NULL,
+		taxable_transaction_$k integer,
+		taxble_wine_trans integer,
+		percent_of_cnty_trans numeric(10,8),
+		table_wine_value	integer NOT NULL,
+PRIMARY KEY (fip_code),
+FOREIGN KEY(fip_code) REFERENCES fips_to_name(fip_code)
+);
+
+--/*CA County Retail Values for Dessert Wine*/  -- debugged --
+
+CREATE TABLE dessert_wine_retail_values (
+			county	   varchar(15) NOT NULL,
+			fip_code INTEGER NOT NULL,
+			num_outlets	integer NOT NULL,
+			taxable_transaction_$k integer,
+			taxble_wine_trans integer,
+			percent_of_cnty_trans numeric(10,8),
+			dessert_wine_value	integer NOT NULL,
+PRIMARY KEY (fip_code),
+FOREIGN KEY(fip_code) REFERENCES fips_to_name(fip_code)
+
+);
+
+--/*CA County Retail Values for Sparkling Wine/Champagne*/  -- debugged --
+
+CREATE TABLE sparkling_champagne_retail_values ( 
+	county	   varchar(15) NOT NULL,
+	fip_code INTEGER NOT NULL,
+	num_outlets	integer NOT NULL,
+	taxable_transaction_$k integer,
+	taxble_wine_trans integer,
+	percent_of_cnty_trans numeric(10,8),
+	sparkling_champagne_value	integer NOT NULL,
+PRIMARY KEY (fip_code),
+FOREIGN KEY(fip_code) REFERENCES fips_to_name(fip_code)
+);
+
+--Tables for on-going Operations for business 
+
+--/* Location Table*/  -- debugged --
+
+CREATE TABLE locations (
+		loc_id   integer NOT NULL,
+		loc_name varchar(50) NOT NULL,
+		loc_address varchar (100) NOT NULL,
+		loc_phone  varchar(20) NOT NULL,
+PRIMARY KEY (loc_id)
+);
+
+--/* Wine Products Table*/ -- debugged --
+
+CREATE TABLE wines (
+		sku   integer NOT NULL,
+		title varchar(150) NOT NULL,
+		country varchar (50),
+		province varchar (50),
+		variety varchar (50),
+		winery varchar (50),
+		wholesale_price numeric (7,2),
+		segment	varchar(20) NOT NULL, 
+PRIMARY KEY (sku),
+FOREIGN KEY (segment) REFERENCES mkt_segs (segment)
+);
+
+--/* Wine reviews reference Table*/ -- debugged --
+
+CREATE TABLE reviews (
+		review_id integer NOT NULL,
+		sku   integer NOT NULL,
+		review varchar(250),
+PRIMARY KEY (review_id),
+FOREIGN KEY (sku) REFERENCES wines (sku)
+);
+
+--/* Customer Table*/ -- debugged --
+
+CREATE TABLE customers (
+          customer_id   integer NOT NULL,
+          customer_name varchar(50) NOT NULL,
+          customer_phone  varchar(20) NOT NULL,
+          loc_pref	integer,
+		  knowledge_level varchar(10),
+	      cost_pref		varchar(10) NOT NULL,
+ 	PRIMARY KEY (customer_id),
+	FOREIGN KEY (cost_pref) REFERENCES mkt_segs (segment),
+	FOREIGN KEY (loc_pref) REFERENCES locations (loc_id)
+	);
+
+--/* Inventory Table*/  -- debugged --
+
+CREATE TABLE inventory (
+		item_id   integer NOT NULL,
+		loc_id integer,
+		retail_price numeric (7,2),
+		segment	varchar(20) NOT NULL, 
+PRIMARY KEY (item_id),
+FOREIGN KEY (segment) REFERENCES mkt_segs (segment),
+FOREIGN KEY (loc_id) REFERENCES locations (loc_id),
+FOREIGN KEY (item_id) REFERENCES wines (sku)
+);
+
+--/* Tranaction Table*/  -- debugged --
+
+CREATE TABLE transactions (
+		trans_id integer NOT NULL,
+		trans_date	date,
+		item_id   integer NOT NULL,
+		loc_id integer,
+		trans_total numeric (8,2),
+PRIMARY KEY (trans_id),
+FOREIGN KEY (item_id ) REFERENCES inventory (item_id ),
+FOREIGN KEY (loc_id) REFERENCES  locations (loc_id)
+); 
+
+
+"
+
+# Execute "Create table" statements on PostgreSQL
+rs <- dbSendQuery(con, stmt)
+
+#Ready to import Excel dataset
+library(readxl)
+
+#Import countytaxabletotal
+countytaxabletotal <- read.csv("/home/codio/workspace/teamwine_countytaxabletotal.csv")
+
+#Import countytaxable_foodservices_drinkingplaces
+countytaxable_foodservices_drinkingplaces <- read.csv("/home/codio/workspace/teamwine_countytaxable_foodservices_drinkingplaces.csv")
+
+#Import countytaxable_foodandBevStores
+countytaxable_foodandBevStores <- read.csv("/home/codio/workspace/teamwine_countytaxable_foodandBevStores.csv")
+
+#Import fip_to_zip
+fip_to_zip <- read.csv("/home/codio/workspace/fip_to_zip.csv")
+fip_to_zip = fip_to_zip[,1:4]
+dbWriteTable(con, name="fips_to_zip", value=fip_to_zip, row.names=FALSE, append=TRUE)
+
+#Import income by zip
+team_wine.income_by_zip <- read.csv("/home/codio/workspace/team_wine-income_by_zip.csv")
+team_wine.income_by_zip = team_wine.income_by_zip[,c(1,3,2,4)]
+dbWriteTable(con, name="taxable_income_zip", value=team_wine.income_by_zip, row.names=FALSE, append=TRUE)
+
+#Import winery wages
+team_wine.winery_wages <- read.csv("/home/codio/workspace/team_wine-winery_wages.csv")
+dbWriteTable(con, name="wages_wineries", value=team_wine.winery_wages, row.names=FALSE, append=TRUE)
+
+#Import wholesale wages
+team_wine.wholesale_wages <- read.csv("/home/codio/workspace/team_wine-wholesale_wages.csv")
+dbWriteTable(con, name="wages_wine_wholesalers", value=team_wine.wholesale_wages, row.names=FALSE, append=TRUE)
+
+#Import liquor wages
+team_wine.liquorstore_wages <- read.csv("/home/codio/workspace/team_wine-liquorstore_wages.csv")
+dbWriteTable(con, name="wages_liquor_stores", value=team_wine.liquorstore_wages, row.names=FALSE, append=TRUE)
+
+#Import industry_info
+market.lookups <- read.csv("/home/codio/workspace/market lookups.csv")
+dbWriteTable(con, name="industry_info", value=market.lookups, row.names=FALSE, append=TRUE)
+
+#Import Wine type retail value
+retailvalue_tablewine <- read_csv("C:/teamwine_retailvalue_tablewine.csv")
+retailvalue_dessertwine <- read_csv("C:/teamwine_retailvalue_dessertwine.csv")
+retailvalue_sparklingwinechampagne <- read_csv("C:/teamwine_retailvalue_sparklingwinechampagne.csv")
+
+#Import Wine data norevs
+norevs <- read_csv("C:\wineData-norevs-nov2019.csv")
+
+#Import Market segments
+norevs <- read_csv("C:\market_segments.csv")
+
+#Import Wine data revsonly
+norevs <- read_csv("C:\winedatarevsonly-nov2019.csv")
+
+#close the connection
+dbDisconnect(con)
+closeAllConnections()
+
+
+--- test space --
+SELECT * FROM taxable_income_county;
+
